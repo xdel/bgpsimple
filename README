@@ -1,0 +1,102 @@
+
+This perl script allows to setup an BGP adjacency with a BGP peer, monitor the messages and updates received from that peer, and to send out updates from a predefined set of NLRIs/attributes. The main work is carried by Net::BGP.
+
+bgp_simple.pl: Simple BGP peering and prefix injection script.
+
+usage:
+bgp_simple.pl: 
+                -myas   ASNUMBER                # (mandatory) our AS number
+                -myip   IP address              # (mandatory) our IP address to source the sesion from
+                -peerip IP address              # (mandatory) peer IP address
+                -peeras ASNUMBER                # (mandatory) peer AS number
+                [-v]                            # (optional) provide verbose output to STDOUT, use twice to get debugs
+                [-f file]                       # (optional) prefixes to advertise (bgpdump formatted)
+                [-o file]                       # (optional) write all sent and received UPDATE messages to file
+                [-m number]                     # (optional) maximum number of prefixes to advertise
+                [-n IP address]                 # (optional) next hop self, overrides original value
+                [-dry]                          # (optional) dry run; dont build adjacency, but check prefix file (requires -f)
+
+Without any prefix file to import, only an adjacency is established and the advertised NLRIs,
+including their attributes, are logged.
+
+The CLI options are pretty much self explaining. Without giving a file that includes NLRIs and attributes, the script will only establish an adjacency and print out UPDATE messages received from the peer.
+The real intention of the script is to feed as many routes to a peer as possible for testing purposes. To get large amounts of real world prefixes, dumps from a DFZ attached peers must be retrieved. Luckily, there are some ressources that provide such dumps, for example RIPE RIS (http://www.ripe.net/projects/ris/rawdata.html) and routeviews.org. Simply fetch a full dump from http://data.ris.ripe.net/rrc00/ (bview.*). 
+
+The script cannot work with this binary data, some conversion has to be done. To do that, get the bgpdump library/utility (http://www.ris.ripe.net/source/). Compile bgpdump, then feed the dump through it; Make sure to specify the -m option to produce the condensed format.:
+
+  zcat bview.20081221.0759.gz | bgpdump -m - > myroutes
+
+The myroutes file now includes the information in text format, parseable by the script (-f option).
+
+Example of such an input file (modified to show error handling):
+$ head -5 myroutes
+TABLE_DUMP2|1229846392|B|80.81.192.242|7575|3.0.0.0/88|7575 15412 9304 80|IGP|80.81.192.242|0|284|7575:1002 7575:2020 7575:6003 7575:8003|NAG||
+TABLE_DUMP2|1229846392|B|80.81.192.242|7575|4.0.0.0/8|7575 2914 3356|IGP|80.81.192.242|0|284|7575:1003 7575:2019 7575:6003|AG|3356 4.69.130.2|
+TABLE_DUMP2|1229846392|B|80.81.192.242|7575|4.0.0.0/9|7575 2914 3356|IGP|80.81.192.242|0|284|7575:1003 7575:2019 7575:6003|AG|3356 4.69.130.2|
+TABLE_DUMP2|1229846392|B|80.81.192.242|7575|4.21.103.0/24|7575 2914 3549 46133|IGP|80.81.192.242|0|284|7575:1003 7575:02019 7575:6003|NAG||
+TABLE_DUMP2|1229846392|B|80.81.192.242|7575|4.23.88.0/23|7575 2914 7018 46164|IGP|80.81.192.242|0|284|7575:1003 7575:2019 7575:6003|NAG||
+
+Some additional information:
+
+Beside some sanity checks, the script does not implement any sort of best route selection. The dumps usually include multiple route information for a prefix, because they contain data from some peerings (neighbors). This means that the script will advertise all of them as an UPDATE message in a sequential order. IOS treats each UPDATE for a prefix as new, because it is expected that a single BGP peer only sends a single UPDATE about a prefix at a given time (its best route). This means that the last line in the prefix file will be the one that gets installed by the receiving peer. 
+
+The script tries to be a little predictive about what to send, depending on the peering type (iBGP/eBGP). For example, "artificial" LOCAL_PREF gets advertised to an iBGP peer, even if the source file doesnt provide this information.
+
+NEXT_HOP gets always altered for eBGP peerings, or for iBGP peerings that have the -n option set. When the -n option doesnt have an IP address specified, NEXT_HOP is set to "myip".
+
+Some attributes are currently ignored, including AS_SET. 32bit ASNs are ignored.
+
+You can specify an upper limit on the amount of prefixes that should be advertised to the peer (-m), to ensure your peer doesnt run out of resources.
+
+The script isnt daemonized (yet), it always runs in the foreground. If a peering is reset, it automatically tries to reinitiate it. If a new adjacency comes up, updates will be sent again.
+
+Example:
+
+$ sudo ./bgp_simple.pl -myas 65500 -myip 192.168.10.1 -peerip 192.168.10.254 -peeras 65500 -f ./myroutes -m 200 -n -v
+---------------------------------------- CONFIG SUMMARY --------------------------------------------------
+Configured for an iBGP session between me (AS65500, 192.168.10.1) and peer (AS65500, 192.168.10.254).
+Generating verbose output, level 1.
+Will use prefixes from file ./myroutes.
+Maximum number of prefixes to be advertised: 200.
+Will spoof next hop address to 192.168.10.1.
+----------------------------------------------------------------------------------------------------------
+Trying to establish session...
+Connection established with peer 192.168.10.254, AS 65500.
+Update received from peer [ 192.168.10.254 ], AS [ 65500 ]. Received prefixes [ 79.247.170.13/32 217.0.118.231/32 192.168.1.0/24 192.168.10.0/24 ], Locpref [ 300 ] MED [ 5000 ] ASPath [  ] Communities [ 65535:65281 65535:65282 ], Origin [ IGP ]
+Sending full update.
+Prefix [ 3.0.0.0/88 ] failed because of wrong prefix format.
+Advertise prefix [ 4.0.0.0/8 ], AS_PATH [ 7575 2914 3356 ], COMMUNITY [ 7575:1003 7575:2019 7575:6003 ], NEXT_HOP [ 192.168.10.1 ]
+Advertise prefix [ 4.0.0.0/9 ], AS_PATH [ 7575 2914 3356 ], COMMUNITY [ 7575:1003 7575:2019 7575:6003 ], NEXT_HOP [ 192.168.10.1 ]
+Advertise prefix [ 4.21.103.0/24 ], AS_PATH [ 7575 2914 3549 46133 ], COMMUNITY [ 7575:1003 7575:2019 7575:6003 ], NEXT_HOP [ 192.168.10.1 ]
+Prefix [ 4.23.88.0/23 ] failed because of wrong COMMUNITY format.
+Advertise prefix [ 4.23.88.0/24 ], AS_PATH [ 7575 2914 7018 46164 ], COMMUNITY [ 7575:1003 7575:2019 7575:6003 ], NEXT_HOP [ 192.168.10.1 ]
+[...]
+Full update sent.
+[...]
+^C
+
+The script requites the Net::BGP perl module to work. Please note that you need to patch Update.pm; announcing the AGGREGATOR seems broken in Net::BGP::Update version 0.0.7:
+
+
+$ diff -u /usr/local/share/perl/5.10.0/Net/BGP/Update_orig.pm /usr/local/share/perl/5.10.0/Net/BGP/Update.pm
+--- /usr/local/share/perl/5.10.0/Net/BGP/Update_orig.pm 2008-06-21 06:42:00.000000000 +0200
++++ /usr/local/share/perl/5.10.0/Net/BGP/Update.pm      2008-12-25 23:05:17.000000000 +0100
+@@ -642,10 +642,12 @@
+ sub _encode_aggregator
+ {
+     my $this = shift();
+-    $this->_encode_attr(BGP_PATH_ATTR_AGGREGATOR,
+-                        pack('Cn',
+-                             $this->{_aggregator}->[0],
+-                             inet_aton($this->{_aggregator}->[1])));
++    my $buffer;
++
++    $buffer =  pack('n', $this->{_aggregator}->[0]);
++    $buffer .= inet_aton($this->{_aggregator}->[1]);
++
++    $this->_encode_attr(BGP_PATH_ATTR_AGGREGATOR, $buffer);
+ }
+ 
+ sub _encode_communities
+
+
