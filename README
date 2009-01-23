@@ -7,7 +7,7 @@ The script was mainly written to take a file with BGP route information (TABLE_D
 
 UPDATE messages received will be logged. Currently, there is no implementation of any local routing policy (except the features and sanity checks described at the NOTES section). Furthermore, no adj-rib-in and adj-rib-out databases are maintained.
 
-Please note that you might need to patch Net::BGP to get correct handling of AGGREGATOR attributes (see the end of this file).
+Please note that you might need to patch Net::BGP to get correct handling of AGGREGATOR attributes (see the end of this file), this got fixed in Net::BGP version 0.12. 
 
 You can redistribute and modify this script under the terms of the GNU General Public License version 3.
 
@@ -197,7 +197,7 @@ Nothing to do.
 DIFF FOR NET::BGP::Update
 =========================
 
-Please note that you need to patch Update.pm; announcing the AGGREGATOR seems broken in Net::BGP::Update version 0.0.7:
+Net::BGP versions earlier than 0.12 need a patch for Update.pm to correctly construct updates that contain the AGGREGATOR attribute (CPAN BugID #42226):
 
 $ diff -u /usr/local/share/perl/5.10.0/Net/BGP/Update_orig.pm /usr/local/share/perl/5.10.0/Net/BGP/Update.pm
 --- /usr/local/share/perl/5.10.0/Net/BGP/Update_orig.pm 2008-06-21 06:42:00.000000000 +0200
