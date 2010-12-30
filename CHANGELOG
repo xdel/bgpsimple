@@ -1,0 +1,23 @@
+v0.11 - 30-Dec-2010
+===================
+
+ - FIX/Improvement:  run multiple listeners at once
+   
+   Instead of listening to all interfaces, the script will now listen to $myip
+   only. This allows for running multiple copies of the script at the same time,
+   at different ip addresses.
+
+   See google code issue #1. Thanks to Charlie Allom for pointing this out.
+  
+
+ - Improvement: Keepalive and HoldTime options added
+
+   Its now possible to change keepalive and holdtime connection parameters. 
+
+   See google code issue #2. Thanks to Thomas Mignien for submitting the patch.
+
+
+v0.10 - 23-Jan-2009
+===================
+
+First public release.

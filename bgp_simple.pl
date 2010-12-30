@@ -16,16 +16,22 @@ use Getopt::Long;
 use Net::BGP;
 use Net::BGP::Process;
 
+my $version = "v0.11";
+my $version_date = "30-Dec-2010";
+
 my $help = <<EOF;
 
 bgp_simple.pl: Simple BGP peering and route injection script.
+Version $version, $version_date.
 
 usage:
 bgp_simple.pl: 
-	       	-myas   ASNUMBER		# (mandatory) our AS number
-	       	-myip   IP address		# (mandatory) our IP address to source the sesion from
-	     	-peerip IP address		# (mandatory) peer IP address
-		-peeras	ASNUMBER		# (mandatory) peer AS number
+	       	-myas   	ASNUMBER	# (mandatory) our AS number
+	       	-myip   	IP address	# (mandatory) our IP address to source the sesion from
+	     	-peerip 	IP address	# (mandatory) peer IP address
+		-peeras		ASNUMBER	# (mandatory) peer AS number
+		[-holdtime]	Seconds		# (optional) BGP hold time duration in seconds (default 60s)
+		[-keepalive]	Seconds		# (optional) BGP KeepAlive timer duration in seconds (default 20s)
  		[-v]                       	# (optional) provide verbose output to STDOUT, use twice to get debugs
  		[-p file]                       # (optional) prefixes to advertise (bgpdump formatted)
 		[-o file]			# (optional) write all sent and received UPDATE messages to file
@@ -110,6 +116,8 @@ my $myip;
 my $peeras;
 my $peerip;
 my %regex_filter;
+my $holdtime = 60;
+my $keepalive = 20;
 
 GetOptions( 	'help' 		=> sub{ sub_debug("m","$help"); exit; },   
 		'm=s' 		=> \$prefix_limit,
@@ -123,7 +131,10 @@ GetOptions( 	'help' 		=> sub{ sub_debug("m","$help"); exit; },
 		'myas=s' 	=> \$myas,
 		'myip=s' 	=> \$myip,
 		'peeras=s' 	=> \$peeras,
-		'peerip=s' 	=> \$peerip );
+		'peerip=s' 	=> \$peerip,
+		'holdtime=s'	=> \$holdtime,
+		'keepalive=s'	=> \$keepalive,
+ );
 
 	
 die "\nPlease provide -myas, -myip, -peerip and -peeras!\n$help" unless ($myas && $myip && $peeras && $peerip);
@@ -179,6 +190,7 @@ if (%regex_filter)
 
 sub_debug ("m", "---------------------------------------- CONFIG SUMMARY --------------------------------------------------\n");
 sub_debug ("m", "Configured for an $peer_type session between me (ASN$myas, $myip) and peer (ASN$peeras, $peerip).\n");
+sub_debug ("m", "Using $keepalive seconds as KeepAlive value and $holdtime seconds as HoldTime value for this peer.\n");
 sub_debug ("m", "Generating verbose output, level $verbose.\n") 				if $verbose;
 sub_debug ("m", "Will use prefixes from file $infile.\n") 					if $infile;
 sub_debug ("m", "Will write sent and received UPDATEs to file $outfile.\n") 			if $outfile;
@@ -204,13 +216,15 @@ if ($dry)
 	exit;
 }
 
-my $bgp  = Net::BGP::Process->new();
+my $bgp  = Net::BGP::Process->new( ListenAddr => $myip );
 my $peer = Net::BGP::Peer->new(
         Start    		=> 0,
         ThisID   		=> $myip,
         ThisAS   		=> $myas,
         PeerID   		=> $peerip,
         PeerAS   		=> $peeras,
+	HoldTime		=> $holdtime,
+	KeepAliveTime		=> $keepalive,
         KeepaliveCallback    	=> \&sub_keepalive_callback,
         UpdateCallback       	=> \&sub_update_callback,
         NotificationCallback 	=> \&sub_notification_callback,
