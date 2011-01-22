@@ -27,7 +27,7 @@ bgp_simple.pl:
                 -peeras ASNUMBER                # (mandatory) peer AS number
 		[-holdtime]	Seconds		# (optional) BGP hold time duration in seconds (default 60s)
 		[-keepalive]	Seconds		# (optional) BGP KeepAlive timer duration in seconds (default 20s)
-		[-nolisten]			# (optional) dont listen at $myip 179/tcp
+		[-nolisten]			# (optional) dont listen at $myip,179/tcp
                 [-v]                            # (optional) provide verbose output to STDOUT, use twice to get debugs
                 [-p file]                       # (optional) prefixes to advertise (bgpdump formatted)
                 [-o file]                       # (optional) write all sent and received UPDATE messages to file
