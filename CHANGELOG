@@ -1,3 +1,17 @@
+v0.12 - 22-Jan-2011
+===================
+
+ - Improvement: nolisten option added
+
+   Will prevent the script from bind to $myip, port 179/tcp. This allows to
+   run multiple instances at the same time, all sourced from the same ip
+   address. Thanks to Adrien le Maire.
+
+   Please note: this is in violation of RFC4271, Section 8.2.1. Because i dont
+   consider neither Net::BGP nor this script a full BGP implementation, and
+   given the usefulness of this parameter, i decided to add the switch; its in
+   Net::BGP anyway.
+   
 v0.11 - 30-Dec-2010
 ===================
 
