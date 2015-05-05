@@ -1,0 +1,215 @@
+# INTRODUCTION #
+
+This perl script allows to setup an BGP adjacency with a BGP peer, monitor the messages and updates received from that peer, and to send out updates from a predefined set of NLRIs/attributes. BGP session and message handling is done by Net::BGP.
+
+The script was mainly written to take a file with BGP route information (TABLE\_DUMP\_V2 format) and to inject these routes over a BGP adjacency. It grew a little over the time, and has some additional features to tweak and filter those routes before advertising them to the peer.
+
+UPDATE messages received will be logged. Currently, there is no implementation of any local routing policy (except the features and sanity checks described at the NOTES section). Furthermore, no adj-rib-in and adj-rib-out databases are maintained.
+
+Please note that you might need to patch Net::BGP to get correct handling of AGGREGATOR attributes (see the end of this file), this got fixed in Net::BGP version 0.12.
+
+You can redistribute and modify this script under the terms of the GNU General Public License version 3.
+
+The script is hosted at http://bgpsimple.googlecode.com. Any bugfixes, suggestions and feature requests are more than welcome, you can reach me via email: the.einval (at) googlemail.com, or via the freenode IRC network, /msg einval. Please bear with me, im not a perl hacker.
+
+# USAGE #
+```
+bgp_simple.pl: Simple BGP peering and route injection script.
+
+usage:
+bgp_simple.pl: 
+                -myas   ASNUMBER                # (mandatory) our AS number
+                -myip   IP address              # (mandatory) our IP address to source the sesion from
+                -peerip IP address              # (mandatory) peer IP address
+                -peeras ASNUMBER                # (mandatory) peer AS number
+                [-holdtime]     Seconds         # (optional) BGP hold time duration in seconds (default 60s)
+                [-keepalive]    Seconds         # (optional) BGP KeepAlive timer duration in seconds (default 20s)
+                [-v]                            # (optional) provide verbose output to STDOUT, use twice to get debugs
+                [-p file]                       # (optional) prefixes to advertise (bgpdump formatted)
+                [-o file]                       # (optional) write all sent and received UPDATE messages to file
+                [-m number]                     # (optional) maximum number of prefixes to advertise
+                [-n IP address]                 # (optional) next hop self, overrides original value
+                [-l number]                     # (optional) set default value for LOCAL_PREF
+                [-dry]                          # (optional) dry run; dont build adjacency, but check prefix file (requires -p)
+                [-f KEY=REGEX]                  # (optional) filter on input prefixes (requires -p), repeat for multiple filters
+                                                        KEY is one of the following attributes (CaSE insensitive):
+
+                                                        NEIG            originating neighbor
+                                                        NLRI            NLRI/prefix(es)
+                                                        ASPT            AS_PATH
+                                                        ORIG            ORIGIN
+                                                        NXHP            NEXT_HOP
+                                                        LOCP            LOCAL_PREF
+                                                        MED             MULTI_EXIT_DISC
+                                                        COMM            COMMUNITY
+                                                        ATOM            ATOMIC_AGGREGATE
+                                                        AGG             AGGREGATOR
+
+                                                        REGEX is a perl regular expression to be expected in a 
+                                                        match statement (m/REGEX/)
+```
+Without any prefix file to import, only an adjacency is established and the received NLRIs, including their attributes, are logged.
+
+# GETTING ROUTE INFORMATION #
+
+The original intention of the script was to feed as many routes to a peer as possible for testing purposes. To get large amounts of real world prefixes, dumps from a DFZ attached peers must be retrieved. Luckily, there are some ressources that provide such dumps, for example RIPE RIS (http://www.ripe.net/projects/ris/rawdata.html). Simply fetch a full dump from http://data.ris.ripe.net/rrc00/ (bview.**).**
+
+The script cannot work with this binary data, some conversion has to be done. To do that, get the bgpdump library/utility (http://www.ris.ripe.net/source/). Compile bgpdump, then feed the dump through it. Make sure to specify the -m option to produce the condensed format:
+
+`zcat bview.20081221.0759.gz | bgpdump -m - > myroutes`
+
+The myroutes file now includes the information in text format, parseable by the script (-p option).
+
+Example of such an input file (modified to show error handling):
+```
+$ head -5 myroutes
+TABLE_DUMP2|1229846392|B|80.81.192.242|7575|3.0.0.0/88|7575 15412 9304 80|IGP|80.81.192.242|0|284|7575:1002 7575:2020 7575:6003 7575:8003|NAG||
+TABLE_DUMP2|1229846392|B|80.81.192.242|7575|4.0.0.0/8|7575 2914 3356|IGP|80.81.192.242|0|284|7575:1003 7575:2019 7575:6003|AG|3356 4.69.130.2|
+TABLE_DUMP2|1229846392|B|80.81.192.242|7575|4.0.0.0/9|7575 2914 3356|IGP|80.81.192.242|0|284|7575:1003 7575:2019 7575:6003|AG|3356 4.69.130.2|
+TABLE_DUMP2|1229846392|B|80.81.192.242|7575|4.21.103.0/24|7575 2914 3549 46133|IGP|80.81.192.242|0|284|7575:1003 7575:02019 7575:6003|NAG||
+TABLE_DUMP2|1229846392|B|80.81.192.242|7575|4.23.88.0/23|7575 2914 7018 46164|IGP|80.81.192.242|0|284|7575:1003 7575:2019 7575:6003|NAG||
+```
+
+# NOTES #
+
+  * The CLI options are pretty much self explaining. Without giving a file that includes NLRIs and attributes, the script will only establish an adjacency and print out UPDATE and NOTIFICATION messages received from the peer.
+
+  * It is possible to do a test run (-dry), enabling to see what the script does without an BGP peering established.
+
+  * Verbose output can be generated by specifying -v, use -v -v to get debug information.
+
+  * Some attributes are currently ignored, including AS\_SET. 32bit ASNs are ignored.
+
+  * You can specify an upper limit on the amount of prefixes that should be advertised to the peer (-m), to ensure your peer doesnt run out of resources.
+
+  * The script isnt daemonized, it always runs in the foreground. If a peering is reset, it automatically tries to reinitiate it. If a new adjacency comes up, updates will be sent again.
+
+  * Beside some sanity checks, the script does not implement any sort of best route selection. The dumps usually include multiple route information for a prefix, because they contain data from some peerings (neighbors). This means that the script will advertise all of them as an UPDATE message in a sequential order. The peer treats each UPDATE for a prefix as new, because it is expected that a single BGP peer only sends a single UPDATE about a prefix at a given time (its best route). This means that the last line in the prefix file will be the one that gets installed by the receiving peer.
+
+  * It is possible to specify filters to limit the scope of routes to advertise (-f option). You can specify multiple filters, but each KEY is expected only once.
+
+  * -f NEIG='x.x.x.x' -f ASPT='^65500' is a valid combination, where -f NEIG='x.x.x.x' -f NEIG='y.y.y.y' will be accepted, but only the last key is respected then. -f NEIG='x.x.x.x|y.y.y.y' is valid, on the other hand.
+
+  * The script tries to be a little predictive about what to send, depending on the peering type (iBGP/eBGP). For example, "artificial" LOCAL\_PREF with the value 0 gets advertised to an iBGP peer, even if the source file doesnt provide this information (override with -l).
+
+  * NEXT\_HOP gets always altered for eBGP peerings, or for iBGP peerings that have the -n option set. When the -n option doesnt have an IP address specified, NEXT\_HOP is set to "myip".
+
+# EXAMPLES #
+
+Simple iBGP peering (dry run), advertise up to 200 prefix lines from the file myroutes, spoof next hop address.
+```
+$ sudo ./bgp_simple.pl -myas 65500 -myip 192.168.10.1 -peerip 192.168.10.254 -peeras 65500 -p src/bgp/bgp_data/myroutes -dry -m 10 -n -v
+---------------------------------------- CONFIG SUMMARY --------------------------------------------------
+Configured for an iBGP session between me (ASN65500, 192.168.10.1) and peer (ASN65500, 192.168.10.254).
+Generating verbose output, level 1.
+Will use prefixes from file src/bgp/bgp_data/myroutes.
+Maximum number of prefixes to be advertised: 10.
+Will spoof next hop address to 192.168.10.1.
+----------------------------------------------------------------------------------------------------------
+Starting dry run.
+Generated Update (not sent): prfx [20.137.0.0/21] aspath [2857 8928 3257 3549 21877 {4237}] locprf [0] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Generated Update (not sent): prfx [20.137.0.0/21] aspath [25560 3257 3549 21877 {4237}] locprf [0] comm [25560:49 25560:4001] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Generated Update (not sent): prfx [20.137.0.0/21] aspath [6695 12731 3549 21877 {4237}] locprf [0] comm [3549:4351 3549:30840] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Generated Update (not sent): prfx [20.137.0.0/21] aspath [12989 3549 21877 {4237}] locprf [0] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Generated Update (not sent): prfx [20.137.0.0/21] aspath [6762 3549 21877 {4237}] locprf [0] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Generated Update (not sent): prfx [20.137.0.0/21] aspath [30890 3356 3356 3549 21877 {4237}] locprf [0] comm [3356:2 3356:22 3356:86 3356:501 3356:666 3356:2065 30890:5999 30890:31666 30890:50003] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Generated Update (not sent): prfx [20.137.0.0/21] aspath [19151 19895 3257 3549 21877 {4237}] locprf [0] comm [3257:30072 3257:50001 3257:54400 3257:54401 19151:4000 19151:64001 19151:65050] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Generated Update (not sent): prfx [20.137.0.0/21] aspath [4589 3549 21877 {4237}] locprf [0] med [10000] comm [3549:4351 3549:30840 4589:2 4589:575 4589:13306] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Generated Update (not sent): prfx [20.137.0.0/21] aspath [29686 3257 3549 21877 {4237}] locprf [0] comm [29686:600 29686:603 29686:801] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Generated Update (not sent): prfx [20.137.0.0/21] aspath [6695 12731 3549 21877 {4237}] locprf [0] comm [3549:4351 3549:30840] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Dry run done, exiting.
+```
+Same example, but now a real session (notice the updates received from the peer):
+```
+$ sudo ./bgp_simple.pl -myas 65500 -myip 192.168.10.1 -peerip 192.168.10.254 -peeras 65500 -p src/bgp/bgp_data/myroutes -m 10 -n -v
+---------------------------------------- CONFIG SUMMARY --------------------------------------------------
+Configured for an iBGP session between me (ASN65500, 192.168.10.1) and peer (ASN65500, 192.168.10.254).
+Generating verbose output, level 1.
+Will use prefixes from file src/bgp/bgp_data/myroutes.
+Maximum number of prefixes to be advertised: 10.
+Will spoof next hop address to 192.168.10.1.
+----------------------------------------------------------------------------------------------------------
+Connection established with peer 192.168.10.254, AS 65500.
+Update received from peer [192.168.10.254], ASN [65500]: prfx [192.168.0.0/16] aspath [] locprf [300] med [5000] comm [65535:65281 65535:65282] orig [IGP] agg [65500 192.168.10.254] nxthp [192.168.10.254]
+Update received from peer [192.168.10.254], ASN [65500]: prfx [79.247.174.120/32 217.0.118.231/32] aspath [] locprf [300] med [5000] comm [65535:65281 65535:65282] orig [IGP] agg [] nxthp [192.168.10.254]
+Sending full update.
+Send Update: prfx [20.137.0.0/21] aspath [2857 8928 3257 3549 21877 {4237}] locprf [0] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Send Update: prfx [20.137.0.0/21] aspath [25560 3257 3549 21877 {4237}] locprf [0] comm [25560:49 25560:4001] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Send Update: prfx [20.137.0.0/21] aspath [6695 12731 3549 21877 {4237}] locprf [0] comm [3549:4351 3549:30840] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Send Update: prfx [20.137.0.0/21] aspath [12989 3549 21877 {4237}] locprf [0] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Send Update: prfx [20.137.0.0/21] aspath [6762 3549 21877 {4237}] locprf [0] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Send Update: prfx [20.137.0.0/21] aspath [30890 3356 3356 3549 21877 {4237}] locprf [0] comm [3356:2 3356:22 3356:86 3356:501 3356:666 3356:2065 30890:5999 30890:31666 30890:50003] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Send Update: prfx [20.137.0.0/21] aspath [19151 19895 3257 3549 21877 {4237}] locprf [0] comm [3257:30072 3257:50001 3257:54400 3257:54401 19151:4000 19151:64001 19151:65050] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Send Update: prfx [20.137.0.0/21] aspath [4589 3549 21877 {4237}] locprf [0] med [10000] comm [3549:4351 3549:30840 4589:2 4589:575 4589:13306] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Send Update: prfx [20.137.0.0/21] aspath [29686 3257 3549 21877 {4237}] locprf [0] comm [29686:600 29686:603 29686:801] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Send Update: prfx [20.137.0.0/21] aspath [6695 12731 3549 21877 {4237}] locprf [0] comm [3549:4351 3549:30840] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Full update sent.
+^C
+```
+Still the same example, but with debug output and filters applied:
+```
+$ sudo ./bgp_simple.pl -myas 65500 -myip 192.168.10.1 -peerip 192.168.10.254 -peeras 65500 -p src/bgp/bgp_data/myroutes -m 10 -n -v -v -f ASPT='(^25560)|3491'
+---------------------------------------- CONFIG SUMMARY --------------------------------------------------
+Configured for an iBGP session between me (ASN65500, 192.168.10.1) and peer (ASN65500, 192.168.10.254).
+Generating verbose output, level 2.
+Will use prefixes from file src/bgp/bgp_data/myroutes.
+Maximum number of prefixes to be advertised: 10.
+Will spoof next hop address to 192.168.10.1.
+Will apply filter to input file:
+	ASPT =~ /(^25560)|3491/
+----------------------------------------------------------------------------------------------------------
+Connection established with peer 192.168.10.254, AS 65500.
+Keepalive received from peer 192.168.10.254, AS 65500.
+Update received from peer [192.168.10.254], ASN [65500]: prfx [192.168.0.0/16] aspath [] locprf [300] med [5000] comm [65535:65281 65535:65282] orig [IGP] agg [65500 192.168.10.254] nxthp [192.168.10.254]
+Update received from peer [192.168.10.254], ASN [65500]: prfx [79.247.174.120/32 217.0.118.231/32] aspath [] locprf [300] med [5000] comm [65535:65281 65535:65282] orig [IGP] agg [] nxthp [192.168.10.254]
+Keepalive received from peer 192.168.10.254, AS 65500.
+Sending full update.
+Line [1], Prefix [20.137.0.0/21] skipped due to ASPT filter (value was: 2857 8928 3257 3549 21877 {4237}).
+Line [2], Prefix [20.137.0.0/21] - doesnt contain valid LOCAL_PREF value but we peer via iBGP (value forced to 0).
+Send Update: prfx [20.137.0.0/21] aspath [25560 3257 3549 21877 {4237}] locprf [0] comm [25560:49 25560:4001] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Line [3], Prefix [20.137.0.0/21] skipped due to ASPT filter (value was: 6695 12731 3549 21877 {4237}).
+Line [4], Prefix [20.137.0.0/21] skipped due to ASPT filter (value was: 12989 3549 21877 {4237}).
+
+[...output skipped...]
+
+Send Update: prfx [20.137.112.0/20] aspath [25560 3257 3549 206 {4237}] locprf [0] comm [25560:49 25560:4001] orig [IGP] agg [206 20.137.127.194] nxthp [192.168.10.1]
+Send Update: prfx [20.137.144.0/20] aspath [25560 3257 3549 206 {4237}] locprf [0] comm [25560:49 25560:4001] orig [IGP] agg [206 20.137.149.255] nxthp [192.168.10.1]
+Send Update: prfx [20.137.160.0/20] aspath [25560 3257 3549 206 4237 {25784}] locprf [0] comm [25560:49 25560:4001] orig [INCOMPLETE] agg [4237 20.137.161.251] nxthp [192.168.10.1]
+Send Update: prfx [20.137.176.0/20] aspath [25560 3257 3549 21877 {4237}] locprf [0] comm [25560:49 25560:4001] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Send Update: prfx [20.137.208.0/20] aspath [25560 3257 3549 3360 {4237}] locprf [0] comm [25560:49 25560:4001] orig [IGP] agg [3360 20.137.216.255] nxthp [192.168.10.1]
+Send Update: prfx [20.137.240.0/20] aspath [25560 3257 3549 21877 {4237}] locprf [0] comm [25560:49 25560:4001] orig [IGP] agg [21877 20.137.31.194] nxthp [192.168.10.1]
+Send Update: prfx [20.139.64.0/20] aspath [8881 3491 9583 17916 4237 {25784}] locprf [0] orig [INCOMPLETE] agg [4237 20.139.66.251] nxthp [192.168.10.1]
+Full update sent.
+Nothing to do.
+Keepalive received from peer 192.168.10.254, AS 65500.
+Nothing to do.
+Nothing to do.
+Nothing to do.
+^C
+```
+# DIFF FOR NET::BGP::Update #
+
+Net::BGP versions earlier than 0.12 need a patch for Update.pm to correctly construct updates that contain the AGGREGATOR attribute (CPAN BugID #42226):
+
+```
+$ diff -u /usr/local/share/perl/5.10.0/Net/BGP/Update_orig.pm /usr/local/share/perl/5.10.0/Net/BGP/Update.pm
+--- /usr/local/share/perl/5.10.0/Net/BGP/Update_orig.pm 2008-06-21 06:42:00.000000000 +0200
++++ /usr/local/share/perl/5.10.0/Net/BGP/Update.pm      2008-12-25 23:05:17.000000000 +0100
+@@ -642,10 +642,12 @@
+ sub _encode_aggregator
+ {
+     my $this = shift();
+-    $this->_encode_attr(BGP_PATH_ATTR_AGGREGATOR,
+-                        pack('Cn',
+-                             $this->{_aggregator}->[0],
+-                             inet_aton($this->{_aggregator}->[1])));
++    my $buffer;
++
++    $buffer =  pack('n', $this->{_aggregator}->[0]);
++    $buffer .= inet_aton($this->{_aggregator}->[1]);
++
++    $this->_encode_attr(BGP_PATH_ATTR_AGGREGATOR, $buffer);
+ }
+ 
+ sub _encode_communities
+```
